@@ -1,6 +1,6 @@
 # TaxIT - Backend (v0.1)
 
-Tax and bookkeeping API for Philippine doctors. Plain **JavaScript** (ES modules) with **Express 5**,
+Tax and Bookkeeping API. Plain **JavaScript** (ES modules) with **Express 5**,
 **Prisma** and **PostgreSQL**.
 
 ## Project structure

@@ -8,7 +8,7 @@ const schema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
-  CORS_ORIGINS: z
+  ALLOWED_ORIGINS: z
     .string()
     .default('')
     .transform((s) => s.split(',').map((o) => o.trim()).filter(Boolean)),
