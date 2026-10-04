@@ -1,0 +1,209 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"
+  output     = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  ACCOUNTANT
+  ADMIN
+}
+
+enum TxKind {
+  INCOME
+  EXPENSE
+}
+
+enum IncomeTaxOption {
+  EIGHT_PERCENT
+  GRADUATED_OSD
+  GRADUATED_ITEMIZED
+}
+
+enum FilingStatus {
+  DRAFT
+  FOR_REVIEW
+  READY_TO_FILE
+  FILED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum BillingPeriod {
+  MONTH
+  QUARTER
+}
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(CLIENT)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  profile        DoctorProfile?
+  refreshTokens  RefreshToken[]
+  categories     Category[]
+  transactions   Transaction[]
+  taxFilings     TaxFiling[]    @relation("FilingOwner")
+  reviewedFilings TaxFiling[]   @relation("FilingReviewer")
+  subscriptions  Subscription[]
+  clientOf       ClientAssignment[] @relation("AssignmentClient")
+  clients        ClientAssignment[] @relation("AssignmentAccountant")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model DoctorProfile {
+  userId          String          @id @map("user_id") @db.Uuid
+  fullName        String          @map("full_name")
+  tin             String?
+  specialty       String?
+  prcLicenseNo    String?         @map("prc_license_no")
+  rdoCode         String?         @map("rdo_code")
+  businessAddress String?         @map("business_address")
+  vatRegistered   Boolean         @default(false) @map("vat_registered")
+  incomeTaxOption IncomeTaxOption @default(EIGHT_PERCENT) @map("income_tax_option")
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("doctor_profiles")
+}
+
+/// userId NULL = system default category available to everyone.
+model Category {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  name      String
+  kind      TxKind
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("categories")
+}
+
+model Transaction {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  kind        TxKind
+  categoryId  String?   @map("category_id") @db.Uuid
+  date        DateTime  @db.Date
+  amount      Decimal   @db.Decimal(14, 2)
+  /// Creditable withholding tax (BIR 2307). Income only.
+  withheldTax Decimal   @default(0) @map("withheld_tax") @db.Decimal(14, 2)
+  description String?
+  counterparty String?
+  /// Object-storage key of the uploaded receipt (S3/R2).
+  receiptKey  String?   @map("receipt_key")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([userId, date])
+  @@map("transactions")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  meta      Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt])
+  @@map("audit_log")
+}
+
+// ---- Phase 2 groundwork (tables exist; endpoints come next) ----
+
+model TaxFiling {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String       @map("user_id") @db.Uuid
+  form       String
+  year       Int
+  period     String
+  status     FilingStatus @default(DRAFT)
+  computed   Json?
+  dueDate    DateTime?    @map("due_date") @db.Date
+  reviewedBy String?      @map("reviewed_by") @db.Uuid
+  filedAt    DateTime?    @map("filed_at") @db.Timestamptz(6)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user     User  @relation("FilingOwner", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("FilingReviewer", fields: [reviewedBy], references: [id])
+
+  @@unique([userId, form, year, period])
+  @@map("tax_filings")
+}
+
+model Plan {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String        @unique
+  name          String
+  price         Decimal       @db.Decimal(14, 2)
+  billingPeriod BillingPeriod @map("billing_period")
+  description   String?
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String             @map("user_id") @db.Uuid
+  planId           String             @map("plan_id") @db.Uuid
+  status           SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model ClientAssignment {
+  clientId     String   @map("client_id") @db.Uuid
+  accountantId String   @map("accountant_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  client     User @relation("AssignmentClient", fields: [clientId], references: [id], onDelete: Cascade)
+  accountant User @relation("AssignmentAccountant", fields: [accountantId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, accountantId])
+  @@map("client_assignments")
+}
